@@ -459,7 +459,89 @@ app.post(
     }
 );
 
+/*
+=========================================================
+ TEMPORARY GEMINI TEST
+=========================================================
+*/
 
+app.get("/api/ai/test", async (req, res) => {
+
+    try {
+
+        const testProduct = {
+
+            name: "Test Wireless Earbuds",
+
+            price: 999,
+
+            currency: "INR",
+
+            rating: 4.3,
+
+            reviewCount: 1248,
+
+            features: [
+                "Bluetooth",
+                "Wireless charging case",
+                "Noise reduction"
+            ],
+
+            reviewSummary:
+                "Users generally like the sound and battery life. " +
+                "Some users mention occasional connectivity issues."
+
+        };
+
+
+        const prompt =
+            buildProductAnalysisPrompt(
+                testProduct
+            );
+
+
+        const analysis =
+            await askGemini(prompt);
+
+
+        return res.json({
+
+            success: true,
+
+            test: true,
+
+            provider: "Gemini",
+
+            model: GEMINI_MODEL,
+
+            analysis
+
+        });
+
+
+    } catch (error) {
+
+        console.error(
+            "GEMINI TEST ERROR:",
+            error
+        );
+
+
+        return res.status(500).json({
+
+            success: false,
+
+            test: true,
+
+            error:
+                error.message ||
+                "Gemini test failed."
+
+        });
+
+    }
+
+});
 /*
 =========================================================
  HEALTH CHECK

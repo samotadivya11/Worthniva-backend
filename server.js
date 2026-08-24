@@ -8,22 +8,37 @@ app.use(express.json({ limit: "1mb" }));
 
 const PORT = process.env.PORT || 3000;
 
+const GEMINI_API_KEY =
+    process.env.GEMINI_API_KEY;
+
+const GEMINI_MODEL =
+    "gemini-3-flash-preview";
+
+
 /*
 =========================================================
  WORTHNIVA PRODUCT INTELLIGENCE API
 =========================================================
 
-Current role:
-- API foundation
-- Product/URL validation
+Current version:
+- Product input validation
 - Marketplace detection
-- Standardized product responses
-- Ready for real product-data providers
+- Gemini AI analysis
+- Structured WORTHNIVA output
+- No fake product facts
+- API key remains server-side
 
 IMPORTANT:
-This version DOES NOT invent product information.
-Real price, rating, review and product data will be
-connected through approved/legitimate data sources later.
+Gemini is the reasoning layer.
+
+It must NOT invent:
+- prices
+- ratings
+- review counts
+- specifications
+- availability
+
+Those facts will come from verified data sources later.
 =========================================================
 */
 
@@ -35,6 +50,7 @@ connected through approved/legitimate data sources later.
 */
 
 const MARKETPLACES = {
+
     amazon: {
         name: "Amazon",
         domains: [
@@ -84,6 +100,7 @@ const MARKETPLACES = {
             "www.ajio.com"
         ]
     }
+
 };
 
 
@@ -92,7 +109,6 @@ const MARKETPLACES = {
  HELPERS
 =========================================================
 */
-
 
 function cleanText(value) {
 
@@ -109,7 +125,8 @@ function isValidUrl(value) {
 
     try {
 
-        const url = new URL(value);
+        const url =
+            new URL(value);
 
         return (
             url.protocol === "http:" ||
@@ -128,27 +145,30 @@ function isValidUrl(value) {
 function detectMarketplace(value) {
 
     if (!isValidUrl(value)) {
-
         return null;
-
     }
 
     try {
 
-        const url = new URL(value);
+        const url =
+            new URL(value);
 
         const hostname =
             url.hostname.toLowerCase();
 
-        for (const [key, marketplace]
-            of Object.entries(MARKETPLACES)) {
+        for (
+            const [id, marketplace]
+            of Object.entries(MARKETPLACES)
+        ) {
 
             if (
-                marketplace.domains.includes(hostname)
+                marketplace.domains.includes(
+                    hostname
+                )
             ) {
 
                 return {
-                    id: key,
+                    id,
                     name: marketplace.name
                 };
 
@@ -172,83 +192,272 @@ function detectMarketplace(value) {
 
 /*
 =========================================================
- STANDARD PRODUCT OBJECT
+ GEMINI AI
 =========================================================
 */
 
-function createEmptyProduct(query) {
+async function askGemini(prompt) {
 
-    return {
+    if (!GEMINI_API_KEY) {
 
-        query,
+        throw new Error(
+            "GEMINI_API_KEY is not configured on the server."
+        );
 
-        marketplace: null,
+    }
 
-        name: null,
 
-        url: isValidUrl(query)
-            ? query
-            : null,
+    const endpoint =
+        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
-        price: null,
 
-        currency: "INR",
+    const response =
+        await fetch(
+            endpoint,
+            {
+                method: "POST",
 
-        originalPrice: null,
+                headers: {
+                    "Content-Type":
+                        "application/json",
 
-        discount: null,
+                    "x-goog-api-key":
+                        GEMINI_API_KEY
+                },
 
-        rating: null,
+                body: JSON.stringify({
 
-        reviewCount: null,
+                    contents: [
 
-        image: null,
+                        {
+                            parts: [
 
-        availability: null,
+                                {
+                                    text:
+                                        prompt
+                                }
 
-        specifications: [],
+                            ]
+                        }
 
-        source: null
+                    ],
 
-    };
+                    generationConfig: {
+
+                        responseMimeType:
+                            "application/json"
+
+                    }
+
+                })
+
+            }
+        );
+
+
+    const data =
+        await response.json();
+
+
+    if (!response.ok) {
+
+        console.error(
+            "GEMINI API ERROR:",
+            data
+        );
+
+        throw new Error(
+            data?.error?.message ||
+            "Gemini API request failed."
+        );
+
+    }
+
+
+    const text =
+        data?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+
+    if (!text) {
+
+        throw new Error(
+            "Gemini returned an empty response."
+        );
+
+    }
+
+
+    try {
+
+        return JSON.parse(text);
+
+    } catch {
+
+        console.error(
+            "GEMINI INVALID JSON:",
+            text
+        );
+
+        throw new Error(
+            "Gemini returned an invalid analysis response."
+        );
+
+    }
 
 }
 
 
 /*
 =========================================================
- WORTHNIVA ANALYSIS OBJECT
+ WORTHNIVA AI PROMPT
 =========================================================
 */
 
-function createPendingAnalysis() {
+function buildProductAnalysisPrompt(product) {
 
-    return {
+    return `
 
-        score: null,
+You are the WORTHNIVA shopping intelligence engine.
 
-        verdict: "Awaiting verified product data",
+Your job is to analyze ONLY the product information that is
+explicitly provided below.
 
-        valueForMoney: null,
+CRITICAL RULES:
 
-        quality: null,
+1. NEVER invent prices.
+2. NEVER invent ratings.
+3. NEVER invent review counts.
+4. NEVER invent specifications.
+5. NEVER claim that you saw reviews that were not provided.
+6. If information is missing, use null or an empty array.
+7. Do not pretend that a product has been verified.
+8. Your recommendation must be based only on supplied facts.
+9. If there is not enough information to make a reliable
+   recommendation, say so clearly.
+10. Do not favor a product because it is an affiliate product.
 
-        reviews: null,
+Return ONLY valid JSON.
 
-        features: null,
+The JSON must have exactly this structure:
 
-        pros: [],
+{
+  "score": number or null,
+  "verdict": "BUY" or "THINK TWICE" or "SKIP" or "INSUFFICIENT DATA",
+  "valueForMoney": number or null,
+  "quality": number or null,
+  "reviewQuality": number or null,
+  "pros": [],
+  "cons": [],
+  "warnings": [],
+  "summary": ""
+}
 
-        cons: [],
+Scoring guidance:
 
-        warnings: [],
+- 90-100 = exceptionally strong evidence
+- 80-89 = generally worth considering
+- 70-79 = decent but has meaningful caveats
+- 60-69 = weak value / significant concerns
+- below 60 = generally avoid
 
-        summary:
-            "WORTHNIVA needs verified product information before giving a final verdict."
+BUT:
 
-    };
+If there is not enough verified information,
+use:
+
+score: null
+verdict: "INSUFFICIENT DATA"
+
+Do not manufacture a score.
+
+PRODUCT INFORMATION:
+
+${JSON.stringify(product, null, 2)}
+
+Analyze this information conservatively.
+`;
 
 }
+
+
+/*
+=========================================================
+ AI PRODUCT ANALYSIS ENDPOINT
+=========================================================
+*/
+
+app.post(
+    "/api/ai/analyze-product",
+    async (req, res) => {
+
+        try {
+
+            const product =
+                req.body?.product;
+
+
+            if (
+                !product ||
+                typeof product !== "object"
+            ) {
+
+                return res.status(400).json({
+
+                    success: false,
+
+                    error:
+                        "A product information object is required."
+
+                });
+
+            }
+
+
+            const prompt =
+                buildProductAnalysisPrompt(
+                    product
+                );
+
+
+            const analysis =
+                await askGemini(prompt);
+
+
+            return res.json({
+
+                success: true,
+
+                source: "Gemini",
+
+                model: GEMINI_MODEL,
+
+                analysis
+
+            });
+
+
+        } catch (error) {
+
+            console.error(
+                "AI ANALYSIS ERROR:",
+                error
+            );
+
+
+            return res.status(500).json({
+
+                success: false,
+
+                error:
+                    error.message ||
+                    "AI analysis failed."
+
+            });
+
+        }
+
+    }
+);
 
 
 /*
@@ -268,7 +477,12 @@ app.get("/", (req, res) => {
         message:
             "WORTHNIVA intelligence engine is running ✦",
 
-        version: "2.0",
+        version: "3.0",
+
+        ai:
+            GEMINI_API_KEY
+                ? "configured"
+                : "not configured",
 
         endpoints: {
 
@@ -276,7 +490,10 @@ app.get("/", (req, res) => {
                 "POST /api/check-product",
 
             compareProducts:
-                "POST /api/compare-products"
+                "POST /api/compare-products",
+
+            aiAnalyzeProduct:
+                "POST /api/ai/analyze-product"
 
         }
 
@@ -291,110 +508,139 @@ app.get("/", (req, res) => {
 =========================================================
 */
 
-app.post("/api/check-product", async (req, res) => {
+app.post(
+    "/api/check-product",
+    async (req, res) => {
 
-    try {
+        try {
 
-        const product =
-            cleanText(req.body?.product);
+            const product =
+                cleanText(
+                    req.body?.product
+                );
 
 
-        if (!product) {
+            if (!product) {
 
-            return res.status(400).json({
+                return res.status(400).json({
+
+                    success: false,
+
+                    error:
+                        "Please provide a product name or URL."
+
+                });
+
+            }
+
+
+            const marketplace =
+                isValidUrl(product)
+                    ? detectMarketplace(product)
+                    : null;
+
+
+            const productData = {
+
+                query: product,
+
+                marketplace,
+
+                name: null,
+
+                url:
+                    isValidUrl(product)
+                        ? product
+                        : null,
+
+                price: null,
+
+                currency: "INR",
+
+                originalPrice: null,
+
+                discount: null,
+
+                rating: null,
+
+                reviewCount: null,
+
+                image: null,
+
+                availability: null,
+
+                specifications: [],
+
+                source: null
+
+            };
+
+
+            return res.json({
+
+                success: true,
+
+                status:
+                    "awaiting_verified_product_data",
+
+                query: product,
+
+                product: productData,
+
+                worthniva: {
+
+                    score: null,
+
+                    verdict:
+                        "Awaiting verified product data",
+
+                    valueForMoney: null,
+
+                    quality: null,
+
+                    reviews: null,
+
+                    features: null,
+
+                    pros: [],
+
+                    cons: [],
+
+                    warnings: [],
+
+                    summary:
+                        "Verified product information is required before WORTHNIVA can make a reliable recommendation."
+
+                },
+
+                sources: [],
+
+                aiReady: true
+
+            });
+
+
+        } catch (error) {
+
+            console.error(
+                "CHECK PRODUCT ERROR:",
+                error
+            );
+
+
+            return res.status(500).json({
 
                 success: false,
 
                 error:
-                    "Please provide a product name or URL."
+                    "Something went wrong while checking the product."
 
             });
 
         }
 
-
-        const productData =
-            createEmptyProduct(product);
-
-
-        /*
-        -------------------------------------------------
-        DETECT MARKETPLACE
-        -------------------------------------------------
-        */
-
-        if (isValidUrl(product)) {
-
-            const marketplace =
-                detectMarketplace(product);
-
-            if (marketplace) {
-
-                productData.marketplace =
-                    marketplace;
-
-            }
-
-        }
-
-
-        /*
-        -------------------------------------------------
-        CURRENT DATA STATUS
-        -------------------------------------------------
-
-        IMPORTANT:
-        No fake product information is generated here.
-
-        Real data providers will be connected later.
-        -------------------------------------------------
-        */
-
-
-        const result = {
-
-            success: true,
-
-            status: "awaiting_data",
-
-            query: product,
-
-            product: productData,
-
-            worthniva:
-                createPendingAnalysis(),
-
-            sources: [],
-
-            nextStep:
-                "Connect an approved product-data provider."
-
-        };
-
-
-        return res.json(result);
-
-
-    } catch (error) {
-
-        console.error(
-            "CHECK PRODUCT ERROR:",
-            error
-        );
-
-
-        return res.status(500).json({
-
-            success: false,
-
-            error:
-                "Something went wrong while checking the product."
-
-        });
-
     }
-
-});
+);
 
 
 /*
@@ -403,164 +649,170 @@ app.post("/api/check-product", async (req, res) => {
 =========================================================
 */
 
-app.post("/api/compare-products", async (req, res) => {
+app.post(
+    "/api/compare-products",
+    async (req, res) => {
 
-    try {
+        try {
 
-        const productA =
-            cleanText(req.body?.productA);
+            const productA =
+                cleanText(
+                    req.body?.productA
+                );
 
-        const productB =
-            cleanText(req.body?.productB);
-
-
-        if (!productA || !productB) {
-
-            return res.status(400).json({
-
-                success: false,
-
-                error:
-                    "Please provide two products to compare."
-
-            });
-
-        }
+            const productB =
+                cleanText(
+                    req.body?.productB
+                );
 
 
-        if (productA === productB) {
+            if (!productA || !productB) {
 
-            return res.status(400).json({
+                return res.status(400).json({
 
-                success: false,
+                    success: false,
 
-                error:
-                    "Please provide two different products."
+                    error:
+                        "Please provide two products to compare."
 
-            });
+                });
 
-        }
-
-
-        const productAData =
-            createEmptyProduct(productA);
-
-        const productBData =
-            createEmptyProduct(productB);
+            }
 
 
-        /*
-        -------------------------------------------------
-        MARKETPLACE DETECTION
-        -------------------------------------------------
-        */
+            if (
+                productA.toLowerCase() ===
+                productB.toLowerCase()
+            ) {
 
-        if (isValidUrl(productA)) {
+                return res.status(400).json({
 
-            productAData.marketplace =
-                detectMarketplace(productA);
+                    success: false,
 
-        }
+                    error:
+                        "Please provide two different products."
 
-        if (isValidUrl(productB)) {
+                });
 
-            productBData.marketplace =
-                detectMarketplace(productB);
-
-        }
+            }
 
 
-        /*
-        -------------------------------------------------
-        CURRENT COMPARISON STATUS
-        -------------------------------------------------
+            const dataA = {
 
-        No winner is invented until verified product
-        information is available.
-        -------------------------------------------------
-        */
+                id: "A",
 
+                query: productA,
 
-        const result = {
+                url:
+                    isValidUrl(productA)
+                        ? productA
+                        : null,
 
-            success: true,
+                marketplace:
+                    isValidUrl(productA)
+                        ? detectMarketplace(productA)
+                        : null,
 
-            status: "awaiting_data",
-
-            products: [
-
-                {
-
-                    id: "A",
-
-                    ...productAData,
-
-                    score: null
-
-                },
-
-                {
-
-                    id: "B",
-
-                    ...productBData,
-
-                    score: null
-
-                }
-
-            ],
-
-            winner: null,
-
-            comparison: {
+                name: null,
 
                 price: null,
 
                 rating: null,
 
-                valueForMoney: null,
+                reviewCount: null
 
-                quality: null,
-
-                reviews: null,
-
-                features: null
-
-            },
-
-            summary:
-                "WORTHNIVA needs verified product information before choosing a winner.",
-
-            nextStep:
-                "Connect approved product-data providers."
-
-        };
+            };
 
 
-        return res.json(result);
+            const dataB = {
+
+                id: "B",
+
+                query: productB,
+
+                url:
+                    isValidUrl(productB)
+                        ? productB
+                        : null,
+
+                marketplace:
+                    isValidUrl(productB)
+                        ? detectMarketplace(productB)
+                        : null,
+
+                name: null,
+
+                price: null,
+
+                rating: null,
+
+                reviewCount: null
+
+            };
 
 
-    } catch (error) {
+            return res.json({
 
-        console.error(
-            "COMPARE PRODUCTS ERROR:",
-            error
-        );
+                success: true,
+
+                status:
+                    "awaiting_verified_product_data",
+
+                products: [
+
+                    dataA,
+
+                    dataB
+
+                ],
+
+                winner: null,
+
+                comparison: {
+
+                    price: null,
+
+                    rating: null,
+
+                    valueForMoney: null,
+
+                    quality: null,
+
+                    reviews: null,
+
+                    features: null
+
+                },
+
+                summary:
+                    "Verified product information is required before WORTHNIVA can choose a winner.",
+
+                aiReady: true
+
+            });
 
 
-        return res.status(500).json({
+        } catch (error) {
 
-            success: false,
+            console.error(
+                "COMPARE PRODUCTS ERROR:",
+                error
+            );
 
-            error:
-                "Something went wrong while comparing products."
 
-        });
+            return res.status(500).json({
+
+                success: false,
+
+                error:
+                    "Something went wrong while comparing products."
+
+            });
+
+        }
 
     }
-
-});
+);
 
 
 /*
@@ -569,18 +821,21 @@ app.post("/api/compare-products", async (req, res) => {
 =========================================================
 */
 
-app.use("/api", (req, res) => {
+app.use(
+    "/api",
+    (req, res) => {
 
-    res.status(404).json({
+        res.status(404).json({
 
-        success: false,
+            success: false,
 
-        error:
-            "WORTHNIVA API endpoint not found."
+            error:
+                "WORTHNIVA API endpoint not found."
 
-    });
+        });
 
-});
+    }
+);
 
 
 /*
@@ -589,24 +844,26 @@ app.use("/api", (req, res) => {
 =========================================================
 */
 
-app.use((error, req, res, next) => {
+app.use(
+    (error, req, res, next) => {
 
-    console.error(
-        "GLOBAL ERROR:",
-        error
-    );
+        console.error(
+            "GLOBAL ERROR:",
+            error
+        );
 
 
-    res.status(500).json({
+        res.status(500).json({
 
-        success: false,
+            success: false,
 
-        error:
-            "WORTHNIVA encountered an unexpected error."
+            error:
+                "WORTHNIVA encountered an unexpected error."
 
-    });
+        });
 
-});
+    }
+);
 
 
 /*
@@ -615,10 +872,13 @@ app.use((error, req, res, next) => {
 =========================================================
 */
 
-app.listen(PORT, () => {
+app.listen(
+    PORT,
+    () => {
 
-    console.log(
-        `WORTHNIVA backend running on port ${PORT}`
-    );
+        console.log(
+            `WORTHNIVA backend running on port ${PORT}`
+        );
 
-});
+    }
+);

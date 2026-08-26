@@ -21,31 +21,6 @@ const GEMINI_URL =
 =========================================================
  WORTHNIVA PRODUCT INTELLIGENCE API
 =========================================================
-
-Architecture:
-
-Website
-   ↓
-WORTHNIVA API
-   ↓
-Verified product information
-   ↓
-Gemini AI
-   ↓
-Structured WORTHNIVA analysis
-
-IMPORTANT:
-Gemini is an analysis/reasoning layer.
-
-It must NOT invent:
-- prices
-- ratings
-- review counts
-- specifications
-- availability
-
-Those must come from verified data sources.
-=========================================================
 */
 
 
@@ -245,7 +220,7 @@ function createProduct(query) {
 
 /*
 =========================================================
- AI RESPONSE SCHEMA
+ EMPTY ANALYSIS
 =========================================================
 */
 
@@ -282,7 +257,7 @@ function emptyAnalysis() {
 
 /*
 =========================================================
- GEMINI
+ GEMINI AI
 =========================================================
 */
 
@@ -291,9 +266,12 @@ async function askGemini(prompt) {
     if (!GEMINI_API_KEY) {
 
         return {
+
             success: false,
+
             error:
                 "Gemini API key is not configured on the server."
+
         };
 
     }
@@ -303,15 +281,21 @@ async function askGemini(prompt) {
 
         const response =
             await fetch(
+
                 GEMINI_URL +
-                `?key=${encodeURIComponent(GEMINI_API_KEY)}`,
+                `?key=${encodeURIComponent(
+                    GEMINI_API_KEY
+                )}`,
+
                 {
 
                     method: "POST",
 
                     headers: {
+
                         "Content-Type":
                             "application/json"
+
                     },
 
                     body: JSON.stringify({
@@ -346,6 +330,7 @@ async function askGemini(prompt) {
                     })
 
                 }
+
             );
 
 
@@ -400,10 +385,10 @@ async function askGemini(prompt) {
             parsed =
                 JSON.parse(text);
 
-        } catch {
+        } catch (error) {
 
             console.error(
-                "Gemini returned non-JSON:",
+                "Gemini returned invalid JSON:",
                 text
             );
 
@@ -473,14 +458,13 @@ CRITICAL RULES:
 5. Never invent specifications.
 6. Never claim that you personally visited a shopping website.
 7. If information is missing, use null or explain that it is unavailable.
-8. Do not make medical, financial, legal or safety-critical claims beyond the supplied information.
-9. Base the recommendation only on the supplied evidence.
-10. If there is not enough information for a reliable recommendation,
+8. Base the recommendation only on the supplied evidence.
+9. If there is not enough information for a reliable recommendation,
    use verdict "INSUFFICIENT DATA".
 
 Return ONLY valid JSON.
 
-Required JSON structure:
+Required structure:
 
 {
   "score": number or null,
@@ -512,7 +496,10 @@ ${JSON.stringify(product, null, 2)}
 =========================================================
 */
 
-function buildComparisonPrompt(productA, productB) {
+function buildComparisonPrompt(
+    productA,
+    productB
+) {
 
     return `
 
@@ -550,11 +537,19 @@ Scores must be between 0 and 100.
 
 PRODUCT A:
 
-${JSON.stringify(productA, null, 2)}
+${JSON.stringify(
+    productA,
+    null,
+    2
+)}
 
 PRODUCT B:
 
-${JSON.stringify(productB, null, 2)}
+${JSON.stringify(
+    productB,
+    null,
+    2
+)}
 
 `;
 
@@ -578,14 +573,612 @@ app.get("/", (req, res) => {
         message:
             "WORTHNIVA intelligence engine is running ✦",
 
-        version: "3.0",
+        version: "3.1",
 
         ai: {
 
-            provider: "Google Gemini",
+            provider:
+                "Google Gemini",
 
             configured:
                 Boolean(GEMINI_API_KEY),
+
+            model:
+                GEMINI_MODEL
+
+        },
+
+        endpoints: {
+
+            checkProduct:
+                "POST /api/check-product",
+
+            compareProducts:
+                "POST /api/compare-products",
+
+            analyzeProduct:
+                "POST /api/analyze-product-data",
+
+            aiTest:
+                "GET /api/ai-test"
+
+        }
+
+    });
+
+});
+
+
+/*
+=========================================================
+ CHECK PRODUCT
+=========================================================
+*/
+
+app.post(
+    "/api/check-product",
+    async (req, res) => {
+
+        try {
+
+            const productInput =
+                cleanText(
+                    req.body?.product
+                );
+
+
+            if (!productInput) {
+
+                return res.status(400).json({
+
+                    success: false,
+
+                    error:
+                        "Please provide a product name or URL."
+
+                });
+
+            }
+
+
+            const product =
+                createProduct(
+                    productInput
+                );
+
+
+            return res.json({
+
+                success: true,
+
+                status:
+                    "awaiting_verified_data",
+
+                query:
+                    productInput,
+
+                product,
+
+                worthniva:
+                    emptyAnalysis(),
+
+                sources: [],
+
+                ai: {
+
+                    available:
+                        Boolean(GEMINI_API_KEY),
+
+                    used: false,
+
+                    reason:
+                        "AI analysis requires verified product information."
+
+                }
+
+            });
+
+
+        } catch (error) {
+
+            console.error(
+                "CHECK PRODUCT ERROR:",
+                error
+            );
+
+
+            return res.status(500).json({
+
+                success: false,
+
+                error:
+                    "Something went wrong while checking the product."
+
+            });
+
+        }
+
+    }
+);
+
+
+/*
+=========================================================
+ ANALYZE VERIFIED PRODUCT DATA WITH GEMINI
+=========================================================
+*/
+
+app.post(
+    "/api/analyze-product-data",
+    async (req, res) => {
+
+        try {
+
+            const product =
+                req.body?.product;
+
+
+            if (
+                !product ||
+                typeof product !== "object"
+            ) {
+
+                return res.status(400).json({
+
+                    success: false,
+
+                    error:
+                        "Verified product data is required."
+
+                });
+
+            }
+
+
+            if (!GEMINI_API_KEY) {
+
+                return res.status(503).json({
+
+                    success: false,
+
+                    error:
+                        "Gemini AI is not configured."
+
+                });
+
+            }
+
+
+            const prompt =
+                buildProductPrompt(
+                    product
+                );
+
+
+            const ai =
+                await askGemini(
+                    prompt
+                );
+
+
+            if (!ai.success) {
+
+                return res.status(502).json({
+
+                    success: false,
+
+                    error:
+                        ai.error
+
+                });
+
+            }
+
+
+            return res.json({
+
+                success: true,
+
+                status:
+                    "analyzed",
+
+                product,
+
+                worthniva:
+                    ai.data,
+
+                ai: {
+
+                    provider:
+                        "Google Gemini",
+
+                    model:
+                        GEMINI_MODEL
+
+                }
+
+            });
+
+
+        } catch (error) {
+
+            console.error(
+                "AI ANALYSIS ERROR:",
+                error
+            );
+
+
+            return res.status(500).json({
+
+                success: false,
+
+                error:
+                    "Something went wrong during AI analysis."
+
+            });
+
+        }
+
+    }
+);
+
+
+/*
+=========================================================
+ COMPARE PRODUCTS
+=========================================================
+*/
+
+app.post(
+    "/api/compare-products",
+    async (req, res) => {
+
+        try {
+
+            const productA =
+                cleanText(
+                    req.body?.productA
+                );
+
+            const productB =
+                cleanText(
+                    req.body?.productB
+                );
+
+
+            if (!productA || !productB) {
+
+                return res.status(400).json({
+
+                    success: false,
+
+                    error:
+                        "Please provide two products to compare."
+
+                });
+
+            }
+
+
+            if (
+                productA.toLowerCase() ===
+                productB.toLowerCase()
+            ) {
+
+                return res.status(400).json({
+
+                    success: false,
+
+                    error:
+                        "Please provide two different products."
+
+                });
+
+            }
+
+
+            const productAData =
+                createProduct(productA);
+
+            const productBData =
+                createProduct(productB);
+
+
+            return res.json({
+
+                success: true,
+
+                status:
+                    "awaiting_verified_data",
+
+                products: [
+
+                    {
+
+                        id: "A",
+
+                        ...productAData,
+
+                        score: null
+
+                    },
+
+                    {
+
+                        id: "B",
+
+                        ...productBData,
+
+                        score: null
+
+                    }
+
+                ],
+
+                winner: null,
+
+                comparison: {
+
+                    price: null,
+
+                    rating: null,
+
+                    valueForMoney: null,
+
+                    quality: null,
+
+                    reviews: null,
+
+                    features: null
+
+                },
+
+                summary:
+                    "Verified product information is required before WORTHNIVA can choose a winner.",
+
+                ai: {
+
+                    available:
+                        Boolean(GEMINI_API_KEY),
+
+                    used: false
+
+                }
+
+            });
+
+
+        } catch (error) {
+
+            console.error(
+                "COMPARE PRODUCTS ERROR:",
+                error
+            );
+
+
+            return res.status(500).json({
+
+                success: false,
+
+                error:
+                    "Something went wrong while comparing products."
+
+            });
+
+        }
+
+    }
+);
+
+
+/*
+=========================================================
+ GET GEMINI TEST
+=========================================================
+
+This is ONLY a temporary/simple browser test.
+
+It uses fictional test data.
+
+It does NOT access Amazon, Flipkart, Myntra
+or any other shopping website.
+=========================================================
+*/
+
+app.get(
+    "/api/ai-test",
+    async (req, res) => {
+
+        try {
+
+            if (!GEMINI_API_KEY) {
+
+                return res.status(503).json({
+
+                    success: false,
+
+                    error:
+                        "Gemini API key is not configured."
+
+                });
+
+            }
+
+
+            const testProduct = {
+
+                name:
+                    "WORTHNIVA AI Test Product",
+
+                price:
+                    1499,
+
+                currency:
+                    "INR",
+
+                originalPrice:
+                    2499,
+
+                rating:
+                    4.3,
+
+                reviewCount:
+                    1250,
+
+                description:
+                    "A fictional test product used only to verify the WORTHNIVA Gemini AI pipeline.",
+
+                specifications: [
+
+                    "Test specification 1",
+
+                    "Test specification 2"
+
+                ],
+
+                reviews: [
+
+                    "Comfortable and good quality.",
+
+                    "Looks nice for the price.",
+
+                    "Sizing could be better."
+
+                ]
+
+            };
+
+
+            const prompt =
+                buildProductPrompt(
+                    testProduct
+                );
+
+
+            const ai =
+                await askGemini(
+                    prompt
+                );
+
+
+            if (!ai.success) {
+
+                return res.status(502).json({
+
+                    success: false,
+
+                    error:
+                        ai.error
+
+                });
+
+            }
+
+
+            return res.json({
+
+                success: true,
+
+                message:
+                    "WORTHNIVA Gemini AI connection is working ✦",
+
+                product:
+                    testProduct,
+
+                worthniva:
+                    ai.data,
+
+                ai: {
+
+                    provider:
+                        "Google Gemini",
+
+                    model:
+                        GEMINI_MODEL
+
+                }
+
+            });
+
+
+        } catch (error) {
+
+            console.error(
+                "GEMINI TEST ERROR:",
+                error
+            );
+
+
+            return res.status(500).json({
+
+                success: false,
+
+                error:
+                    "Gemini connection test failed."
+
+            });
+
+        }
+
+    }
+);
+
+
+/*
+=========================================================
+ UNKNOWN API ROUTE
+=========================================================
+*/
+
+app.use(
+    "/api",
+    (req, res) => {
+
+        res.status(404).json({
+
+            success: false,
+
+            error:
+                "WORTHNIVA API endpoint not found."
+
+        });
+
+    }
+);
+
+
+/*
+=========================================================
+ GLOBAL ERROR HANDLER
+=========================================================
+*/
+
+app.use(
+    (error, req, res, next) => {
+
+        console.error(
+            "GLOBAL ERROR:",
+            error
+        );
+
+
+        res.status(500).json({
+
+            success: false,
+
+            error:
+                "WORTHNIVA encountered an unexpected error."
+
+        });
+
+    }
+);
+
+
+/*
+=========================================================
+ START SERVER
+=======================     Boolean(GEMINI_API_KEY),
 
             model:
                 GEMINI_MODEL

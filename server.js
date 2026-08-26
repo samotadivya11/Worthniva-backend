@@ -1130,7 +1130,125 @@ app.post(
     }
 );
 
+/*
+=========================================================
+ TEMPORARY GEMINI CONNECTION TEST
+=========================================================
+*/
 
+app.get("/api/ai-test", async (req, res) => {
+
+    try {
+
+        if (!GEMINI_API_KEY) {
+
+            return res.status(503).json({
+
+                success: false,
+
+                error:
+                    "Gemini API key is not configured."
+
+            });
+
+        }
+
+
+        const testProduct = {
+
+            name: "WORTHNIVA AI Test Product",
+
+            price: 1499,
+
+            currency: "INR",
+
+            originalPrice: 2499,
+
+            rating: 4.3,
+
+            reviewCount: 1250,
+
+            description:
+                "This is a fictional test product used only to verify the WORTHNIVA Gemini AI connection.",
+
+            specifications: [
+                "Test specification 1",
+                "Test specification 2"
+            ],
+
+            reviews: [
+                "Comfortable and good quality.",
+                "Looks nice for the price.",
+                "Sizing could be better."
+            ]
+
+        };
+
+
+        const ai = await askGemini(
+            buildProductPrompt(testProduct)
+        );
+
+
+        if (!ai.success) {
+
+            return res.status(502).json({
+
+                success: false,
+
+                error: ai.error
+
+            });
+
+        }
+
+
+        return res.json({
+
+            success: true,
+
+            message:
+                "WORTHNIVA Gemini AI connection is working ✦",
+
+            product:
+                testProduct,
+
+            worthniva:
+                ai.data,
+
+            ai: {
+
+                provider:
+                    "Google Gemini",
+
+                model:
+                    GEMINI_MODEL
+
+            }
+
+        });
+
+
+    } catch (error) {
+
+        console.error(
+            "GEMINI TEST ERROR:",
+            error
+        );
+
+
+        return res.status(500).json({
+
+            success: false,
+
+            error:
+                "Gemini connection test failed."
+
+        });
+
+    }
+
+});
 /*
 =========================================================
  UNKNOWN API ROUTE

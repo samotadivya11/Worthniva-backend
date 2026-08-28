@@ -1123,8 +1123,98 @@ app.get(
     }
 );
 
-
 /*
+=========================================================
+   MYNTRA ACCESS TEST
+========================================================= */
+
+app.get(
+    "/api/myntra-test",
+    async (req, res) => {
+
+        try {
+
+            const myntraUrl =
+                "https://www.myntra.com/roll-ons/nivea/nivea-women-pearl--beauty-roll-on-deodorant-50-ml/9686493/buy";
+
+
+            const response =
+                await fetch(
+                    myntraUrl,
+                    {
+                        method: "GET",
+
+                        headers: {
+                            "User-Agent":
+                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+
+                            "Accept":
+                                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+
+                            "Accept-Language":
+                                "en-US,en;q=0.9"
+                        }
+                    }
+                );
+
+
+            const html =
+                await response.text();
+
+
+            return res.json({
+
+                success: true,
+
+                myntraUrl,
+
+                httpStatus:
+                    response.status,
+
+                contentType:
+                    response.headers.get(
+                        "content-type"
+                    ),
+
+                contentLength:
+                    html.length,
+
+                pageRetrieved:
+                    response.ok,
+
+                preview:
+                    html.substring(
+                        0,
+                        500
+                    )
+
+            });
+
+
+        } catch (error) {
+
+            console.error(
+                "MYNTRA TEST ERROR:",
+                error
+            );
+
+
+            return res.status(500).json({
+
+                success: false,
+
+                error:
+                    error.message ||
+                    "Could not retrieve Myntra page."
+
+            });
+
+        }
+
+    }
+);
+/*
+
 =========================================================
  UNKNOWN API ROUTE
 =========================================================
